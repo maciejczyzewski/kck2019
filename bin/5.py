@@ -6,6 +6,7 @@
 # Used materials:
 # https://haythamfayek.com/2016/04/21/speech-processing-for-machine-learning.html
 # https://librosa.github.io/librosa/generated/librosa.feature.melspectrogram.html
+# https://github.com/jameslyons/python_speech_features
 ################################################################################
 
 try:
@@ -19,8 +20,10 @@ else:
     sys.excepthook = IPython.core.ultratb.ColorTB()
 
 import os
+import time
 import pickle
 import librosa
+import argparse
 import numpy as np
 import lightgbm as lgb
 import matplotlib.pyplot as plt
@@ -42,6 +45,38 @@ def save_dataset(name, data):
 def load_dataset(name):
     with open(f"data/{name}.pickle", "rb") as handle:
         return pickle.load(handle)
+
+
+def fbanks(signal, NFFT=512, nfilt=40):
+    """Author: Haytham Fayek"""
+    global SAMPLE_RATE
+    mag_frames = np.absolute(np.fft.rfft(signal, NFFT))  # Magnitude of the FFT
+    pow_frames = (1.0 / NFFT) * ((mag_frames)**2)  # Power Spectrum
+
+    low_freq_mel = 0
+    high_freq_mel = 2595 * np.log10(
+        1 + (SAMPLE_RATE / 2) / 700)  # Convert Hz to Mel
+    mel_points = np.linspace(low_freq_mel, high_freq_mel,
+                             nfilt + 2)  # Equally spaced in Mel scale
+    hz_points = 700 * (10**(mel_points / 2595) - 1)  # Convert Mel to Hz
+    bin = np.floor((NFFT + 1) * hz_points / SAMPLE_RATE)
+
+    fbank = np.zeros((nfilt, int(np.floor(NFFT / 2 + 1))))
+    for m in range(1, nfilt + 1):
+        f_m_minus = int(bin[m - 1])  # left
+        f_m = int(bin[m])  # center
+        f_m_plus = int(bin[m + 1])  # right
+
+        for k in range(f_m_minus, f_m):
+            fbank[m - 1, k] = (k - bin[m - 1]) / (bin[m] - bin[m - 1])
+        for k in range(f_m, f_m_plus):
+            fbank[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
+    filter_banks = np.dot(pow_frames, fbank.T)
+    filter_banks = np.where(filter_banks == 0,
+                            np.finfo(float).eps,
+                            filter_banks)  # Numerical Stability
+    filter_banks = 20 * np.log10(filter_banks)
+    return filter_banks
 
 
 class Dataset:
@@ -126,46 +161,46 @@ class Dataset:
         return frames
 
     def features(signal):
-        # FIXME: okay, te wystarcza, przepisac na moja implt.
-        from python_speech_features import fbank, ssc
-
-        fbanks_l, fbanks_r = fbank(signal)
-        features = [
-            list(ssc(signal).mean(axis=0).flatten()),
-            list(np.array(fbanks_l).mean(axis=0).flatten()),
-            list(fbanks_r.flatten()),
-        ]
-
-        return np.array(sum(features, []))
+        return fbanks(signal)
 
 
 class Model:
     params = {
-        "boosting_type": "gbdt",
+        "boosting_type": "dart",
         "objective": "binary",
         "metric": ["binary_error", "binary_logloss"],
         "is_unbalance": True,
         "feature_fraction": 0.85,
-        "learning_rate": 0.005,
+        # "learning_rate": 0.005,
+        "learning_rate": 0.05,
         "verbose": -1,
         "min_split_gain": 0.1,
         "reg_alpha": 0.3,
-        "max_bin": 10,
-        "num_leaves": 32,
-        "max_depth": 9,
+        "max_bin": 7,
+        "num_leaves": 7,
+        "max_depth": 7,
+        # "feature_fraction": 0.4,
+        # "bagging_freq": 5,
+        # "bagging_fraction": 0.4,
+        # "max_bin": 10,
+        # "num_leaves": 32,
+        # "max_depth": 9,
         "min_child_weight": 0.5,
+        # "num_iterations": 20,
+        # "convert_model_language": "cpp",
     }
 
     def __init__(self, dataset=None):
         files = glob("data/trainall/*.wav")
         self.dataset = dataset
-        self.load()
+        # self.load()
 
     def samples(self):
         X_train, X_test, y_train, y_test = train_test_split(self.dataset.X,
                                                             self.dataset.y,
                                                             test_size=0.33,
                                                             random_state=42)
+
         print("X_train --->", X_train.shape)
         lgb_train = lgb.Dataset(X_train, y_train)
         lgb_test = lgb.Dataset(X_test, y_test)
@@ -176,13 +211,20 @@ class Model:
 
         lgb_train, lgb_test = self.samples()
 
+        def learning_rate(epoch, span=100):
+            cycle = [0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.005]
+            lr = cycle[(epoch // span) % len(cycle)]
+            print(f"LEARN RATE = {lr}")
+            return lr
+
         gbm = lgb.train(
             self.params,
             lgb_train,
-            num_boost_round=100 * 50000,
+            num_boost_round=4000,  # +oo
             valid_sets=lgb_test,
-            init_model=MODEL_PATH,
-            early_stopping_rounds=2000,  # 5000
+            # init_model=MODEL_PATH,
+            early_stopping_rounds=500,  # 5000
+            callbacks=[lgb.reset_parameter(learning_rate=learning_rate)],
         )
         gbm.save_model(MODEL_PATH)
         self.load()
@@ -193,18 +235,17 @@ class Model:
     def show(self):
         print("Feature importances:", list(self.pst.feature_importance()))
 
-        ax = lgb.plot_tree(self.pst)
-        plt.show()
+        for i in range(0, 1):
+            ax = lgb.plot_tree(self.pst, tree_index=i)
+            plt.show()
 
-        ax = lgb.plot_importance(self.pst,
-                                 importance_type="gain",
-                                 max_num_features=30)
+        ax = lgb.plot_importance(self.pst, importance_type="gain")
         plt.show()
 
     def predict(self, signal, sample_rate):
         windows = Dataset.windows(signal, sample_rate=sample_rate)
         X_predict = []
-        skip = int(windows.shape[0] / (0.01 * windows.shape[0]))
+        skip = int(windows.shape[0] / (0.1 * windows.shape[0]))
         # print(windows.shape, skip)
         for window in windows[::skip]:
             features = Dataset.features(window)
@@ -216,11 +257,13 @@ class Model:
             return "M"
 
 
-# MANUAL TEST
 def test(model):
+    # weryfikacja dzialania
     global MODEL_PATH, SAMPLE_RATE, DATASET_FILES
     files = glob(DATASET_FILES)
 
+    count_false = 0
+    T1 = time.time()
     for path in tqdm(files):
         print(f"path={path}")
         signal, sample_rate = Dataset.audio(path)
@@ -230,7 +273,11 @@ def test(model):
             result = "\033[92m OKAY \033[m"
         else:
             result = "\033[90m;-( \033[m"
+            count_false += 1
         print(f"path={path} | {pred} {result}")
+    T2 = time.time()
+    print(f"speed = {(T2-T1)/len(files)}sec")
+    print(f"accuracy = {((len(files)-count_false)/len(files))*100}%")
 
 
 def do(model, path):
@@ -240,8 +287,6 @@ def do(model, path):
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description="Voice.")
     parser.add_argument(
         "--dataset",
@@ -290,7 +335,9 @@ if __name__ == "__main__":
         model.show()
     if args.test:
         model = Model()
+        model.load()
         test(model)
     if args.do:
         model = Model()
+        model.load()
         do(model, args.path)

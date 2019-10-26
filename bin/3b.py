@@ -1,30 +1,14 @@
-import matplotlib
-from collections.abc import Iterable
-"""
-convert           \
-   -verbose       \
-   -density 150   \
-   -trim          \
-    map.pdf       \
-   -quality 100   \
-   -flatten       \
-   -sharpen 0x1.0 \
-    map.jpg
-"""
-
-# matplotlib.use("Agg")  # So that we can render files without GUI
-import matplotlib.pyplot as plt
-from matplotlib import rc
-from tqdm import tqdm
+import os
 import numpy as np
-import math
+from numba import jit, njit
+import matplotlib.pyplot as plt
 
 PATH = "data/big.dem"
 
 
 def read_data(path):
     data_raw = open(PATH, "r").read().split("\n")
-    _, _, height = data_raw[0].split()
+    _, _, _ = data_raw[0].split()
     data, map2d = data_raw[1:], []
 
     for row in data:
@@ -33,99 +17,39 @@ def read_data(path):
             continue
         map2d.append(vec)
 
-    return float(height), np.array(map2d)
+    return np.array(map2d)
 
 
-def plot_color_gradients(data, gradient, height=None):
-    fig, ax = plt.subplots(nrows=1,
-                           sharex=True,
-                           figsize=(data.shape[0] / 100, data.shape[1] / 100))
+def surface_intensity(terrain, azimuth=165, elevation=45):
+    """@numpy"""
+    az = azimuth * np.pi / 180.0  # kierunek -> radiany
+    alt = elevation * np.pi / 180.0  # kat padania -> radiany
 
-    light_const = 130 / 3  # light = (0, 0)
-    height_const = 2 * height / 100
-    light_pos = (-100, -100)
+    dx, dy = np.gradient(terrain)
 
-    wut = np.zeros((data.shape[0], data.shape[1], 1))
-    wut2 = np.zeros((data.shape[0], data.shape[1], 1))
-    wut3 = np.zeros((data.shape[0], data.shape[1], 1))
+    slope = 0.5 * np.pi - np.arctan(np.hypot(dx, dy))
+    aspect = np.arctan2(dy, dx)
 
-    for i in tqdm(range(data.shape[0])):
-        for j in range(data.shape[1]):
-            try:
-                wx = data[i, j - 1] - data[i, j + 1]
-                wy = data[i + 1, j] - data[i - 1, j]
-                wz = height_const
+    intensity = np.sin(alt) * np.sin(slope) + np.cos(alt) * np.cos(
+        slope) * np.cos(-az - aspect - 0.5 * np.pi)
 
-                if wx == wy and wx == 0:
-                    wy = 1
-
-                angle = (wx * light_pos[0] + wy * light_pos[1]) / (math.hypot(
-                    wx, wy) * math.hypot(light_pos[0], light_pos[1]))
-                a = math.acos(angle)
-
-                wut3[i, j] = a
-                wut2[i, j] = a / 6
-                wut[i, j] = a / 3
-            except:
-                pass
-
-    for i in tqdm(range(data.shape[0])):
-        for j in range(data.shape[1]):
-            try:
-                a = math.atan2(1, wut3[i, j]) / math.pi
-                b = 1 - abs(a)
-                t3 = wut[i - 1, j - 1] + wut[i, j - 1] + wut[i - 1, j]
-                d = t3 / 3 - b
-                if d > 0:
-                    bn = 0.1 * b  # XXX: jak spectogram
-                else:
-                    bn = (1 + t3) / 4
-                    wut[i - 1, j - 1] = bn
-                    wut[i - 1, j] = bn
-                    wut[i, j - 1] = bn
-                    wut2[i, j] = 2 * d**2
-                wut[i, j] = bn
-            except:
-                pass
-
-    for _i in tqdm(range(data.shape[0])):
-        for _j in range(data.shape[1]):
-            i, j = data.shape[0] - _i, data.shape[1] - _j
-            try:
-                a = math.atan2(1, wut3[i, j]) / math.pi
-                b = 1 - abs(a)
-                t3 = wut[i + 1, j + 1] + wut[i, j + 1] + wut[i + 1, j]
-                d = t3 / 3 - b
-                if d > 0:
-                    bn = b - d**2
-                else:
-                    bn = (1 + t3) / 4
-                    wut[i + 1, j + 1] = bn
-                    wut[i + 1, j] = bn
-                    wut[i, j + 1] = bn
-                    wut2[i, j] = 2 * d**2
-                wut[i, j] = bn
-            except:
-                pass
-
-    img = np.zeros((data.shape[0], data.shape[1], 3))
-    for i in tqdm(range(data.shape[0])):
-        for j in range(data.shape[1]):
-            img[i, j] = gradient(data[i, j],
-                                 a=1 - wut2[i, j] * 1.3,
-                                 b=wut[i, j])
-
-    im = ax.imshow(img, aspect="auto")
-    im.set_extent([0, 1, 0, 1])
-    ax.yaxis.set_visible(True)
-    plt.yticks(np.arange(0, 1 + 0.2, 0.2), [0, 100, 200, 300, 400, ""][::-1])
-    plt.xticks(np.arange(0, 1, 0.2), np.arange(0, data.shape[1], 100))
-    ax.tick_params(direction="in", top=True, right=True)
-
-    fig.savefig("map.pdf")
-    plt.show()
+    return (intensity - intensity.min()) / (intensity.max() - intensity.min())
 
 
+def surface_unit_normals(terrain):
+    """@numpy"""
+    dr, dc = np.gradient(terrain)
+
+    vr = np.dstack((dr, np.ones_like(dr), np.zeros_like(dr)))
+    vc = np.dstack((dc, np.zeros_like(dc), np.ones_like(dc)))
+
+    surface_normals = np.cross(vr, vc)
+
+    normal_magnitudes = np.linalg.norm(surface_normals, axis=2)
+    return surface_normals / np.expand_dims(normal_magnitudes, axis=2)
+
+
+@njit
 def hsv2rgb(h, s, v):
     c = v * s
     x = c * (1 - abs((h / 60) % 2 - 1))
@@ -142,10 +66,73 @@ def hsv2rgb(h, s, v):
     return ((r + m), (g + m), (b + m))
 
 
+@njit
 def gradient_hsv_unknown(v, a=1, b=1):
     return hsv2rgb(150 - v, a, b)
 
 
+@jit(nopython=True)
+def surface_shadow_mapping(map_data, map_shadow, map_light, map_antishadow):
+    img = np.zeros((map_data.shape[0], map_data.shape[1], 3))
+
+    for i in range(map_data.shape[0]):
+        for j in range(map_data.shape[1]):  # hsv
+            img[i, j] = gradient_hsv_unknown(
+                map_data[i, j],
+                a=min(
+                    1.1 - np.log1p(map_light[i, j, 0]) / 2 -
+                    map_antishadow[i, j]**2 / 3,
+                    1,
+                ),
+                b=min(0.5 + np.log1p(map_shadow[i, j]), 1),
+            )
+
+    return img
+
+
+def save_to_file(fig, name="map_final"):
+    fig.savefig(f"{name}.pdf")
+    os.system(f"""convert \
+       -verbose           \
+       -density 175       \
+       -trim              \
+        {name}.pdf        \
+       -quality 100       \
+       -flatten           \
+       -sharpen 0x1.0     \
+        {name}.jpg""")
+
+
+def plot_color_gradients(data, height=None):
+    fig, ax = plt.subplots(nrows=1,
+                           sharex=True,
+                           figsize=(data.shape[0] / 100, data.shape[1] / 100))
+
+    map_shadow = np.zeros((data.shape[0], data.shape[1], 1))
+    map_light = np.zeros((data.shape[0], data.shape[1], 1))
+
+    import scipy.ndimage
+
+    sigma = [0.75, 0.75]
+    data = scipy.ndimage.filters.gaussian_filter(data, sigma, mode="constant")
+
+    map_shadow = surface_intensity(data, azimuth=270, elevation=70)
+    map_antishadow = surface_intensity(data, azimuth=60, elevation=80)
+
+    map_light = surface_unit_normals(data)
+
+    img = surface_shadow_mapping(data, map_shadow, map_light, map_antishadow)
+
+    im = ax.imshow(img, aspect="auto")
+    im.set_extent([0, 1, 0, 1])
+    ax.yaxis.set_visible(True)
+    plt.yticks(np.arange(0, 1 + 0.2, 0.2), [0, 100, 200, 300, 400, ""][::-1])
+    plt.xticks(np.arange(0, 1, 0.2), np.arange(0, data.shape[1], 100))
+    ax.tick_params(direction="in", top=True, right=True)
+
+    save_to_file(fig)
+    plt.show()
+
+
 if __name__ == "__main__":
-    height, data = read_data(PATH)
-    plot_color_gradients(data, gradient_hsv_unknown, height=height)
+    plot_color_gradients(read_data(PATH))
