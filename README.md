@@ -47,21 +47,13 @@ $ python3 bin/3b.py # mapa
 
 Gradients             |  Map (voxel)
 :-------------------------:|:-------------------------:
-<<<<<<< HEAD
 ![](gradients.jpg)  |  ![](map_final.jpg)
-=======
-![](gradients.jpg)  |  ![](map.jpg)
->>>>>>> 3dc2ccd475816a927c2cd58c46d40b0f77ecf84e
 
 ## Zadanie 4
 
 ```bash
 # przerobi wszystko co znajduje sie w data/planes
-<<<<<<< HEAD
 $ python3 bin/4.py # map_final.pdf (dobra jakosc)
-=======
-$ python3 bin/4.py
->>>>>>> 3dc2ccd475816a927c2cd58c46d40b0f77ecf84e
 ```
 
 ![ok](samoloty.jpg)
@@ -83,7 +75,6 @@ Decision Tree             |  Features
 $ python3 bin/5.py --dataset
 $ python3 bin/5.py --train
 $ python3 bin/5.py --test
-<<<<<<< HEAD
 # odpalenie dla pojedynczego pliku:
 $ python3 bin/5.py --do --path=data/myaudio/chyba_dziala_M.wav
 ```
@@ -93,9 +84,3 @@ $ python3 bin/5.py --do --path=data/myaudio/chyba_dziala_M.wav
 Implementation             |  Result
 :-------------------------:|:-------------------------:
 **Projekt:** https://github.com/maciejczyzewski/slonie_w_pontonie | ![](https://github.com/maciejczyzewski/slonie_w_pontonie/raw/master/keypoints_pose_18.png) ![](https://github.com/maciejczyzewski/slonie_w_pontonie/raw/master/timeseries.png)
-=======
-$ python3 bin/5.py --dataset
-# odpalenie dla pojedynczego pliku:
-$ python3 bin/5.py --do --path=data/myaudio/chyba_dziala_M.wav
-```
->>>>>>> 3dc2ccd475816a927c2cd58c46d40b0f77ecf84e
