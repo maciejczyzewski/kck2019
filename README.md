@@ -13,6 +13,7 @@
 - Projekty:
   - [projekt 1](#projekt-1): rozpoznawanie planszy (szachy)
   - [projekt 2](#projekt-2): rozpoznawanie plci z dzwieku
+  - [projekt 3](#projekt-3): aplikacja do badania progresu treningu
 
 ---
 
@@ -45,7 +46,7 @@ $ python3 bin/3a.py # gradienty
 $ python3 bin/3b.py # mapa
 ```
 
-Gradients             |  Map (voxel)
+Gradients             |  Map [[pdf]](map_final.pdf)
 :-------------------------:|:-------------------------:
 ![](gradients.jpg)  |  ![](map_final.jpg)
 
